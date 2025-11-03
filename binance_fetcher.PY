@@ -6,17 +6,24 @@ from datetime import datetime, timedelta
 from tqdm.asyncio import tqdm
 from pathlib import Path
 import logging
+import random
+import time
+from collections import defaultdict
 
 # ---------------- CONFIGURATION ----------------
 SYMBOLS_FILE = "symbols.txt"
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "8h", "12h", "1d", "1w", "1M"]
 YEARS_OF_DATA = 5
 BASE_URL = "https://api.binance.com/api/v3/klines"
-MAX_CONCURRENT_REQUESTS = 10  # Increased for better throughput
-REQUEST_DELAY = 0.02  # Reduced delay
+MAX_CONCURRENT_REQUESTS = 10
+REQUEST_DELAY = 0.05  # Slightly increased base delay
 MAX_RETRIES = 3
 ERROR_LOG = "errors.log"
-DATA_DIR = "data"  # Organized data directory
+DATA_DIR = "data"
+
+# Rate limit tracking
+RATE_LIMIT_HEADERS = {}
+LAST_REQUEST_TIME = {}
 
 # Setup logging
 logging.basicConfig(
@@ -49,7 +56,7 @@ def timeframe_to_ms(tf):
         'h': 60 * 60 * 1000,
         'd': 24 * 60 * 60 * 1000,
         'w': 7 * 24 * 60 * 60 * 1000,
-        'M': 30 * 24 * 60 * 60 * 1000
+        'M': 30 * 24 * 60 * 60 * 1000  # Note: This is approximate
     }
     unit = tf[-1]
     value = int(tf[:-1]) if len(tf) > 1 else 1
@@ -78,7 +85,7 @@ def klines_to_df(klines):
 def get_optimal_limit(tf):
     """Get optimal request limit based on timeframe."""
     if tf in ["1m", "5m"]:
-        return 1000
+        return 500  # Reduced from 1000 to avoid timeouts
     elif tf in ["15m", "30m", "1h"]:
         return 1000
     elif tf in ["4h", "8h", "12h"]:
@@ -97,7 +104,15 @@ async def fetch_klines(session, symbol, tf, start_ts, limit=1000, retries=0):
     }
     
     try:
-        async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=15)) as response:
+        async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            # Track rate limit headers
+            if 'X-MBX-USED-WEIGHT' in response.headers:
+                RATE_LIMIT_HEADERS[symbol] = {
+                    'weight': int(response.headers['X-MBX-USED-WEIGHT']),
+                    'reset': int(response.headers.get('X-MBX-USED-WEIGHT-1M', 0)),
+                    'timestamp': time.time()
+                }
+            
             if response.status == 429:  # Rate limit
                 retry_after = int(response.headers.get('Retry-After', 60))
                 logger.warning(f"Rate limited on {symbol} {tf}, waiting {retry_after}s")
@@ -132,7 +147,9 @@ async def fetch_all_klines(symbol, tf, start_ts, end_ts=None):
     limit = get_optimal_limit(tf)
     end_ts = end_ts or int(datetime.now().timestamp() * 1000)
     
+    # Reuse connector and session
     connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
+    
     async with aiohttp.ClientSession(connector=connector) as session:
         request_count = 0
         
@@ -152,7 +169,8 @@ async def fetch_all_klines(symbol, tf, start_ts, end_ts=None):
             if start_ts >= end_ts:
                 break
             
-            await asyncio.sleep(REQUEST_DELAY)
+            # Add small randomized delay between requests to avoid rate limits
+            await asyncio.sleep(REQUEST_DELAY + random.uniform(0, 0.05))
     
     return all_klines, request_count
 
@@ -234,8 +252,8 @@ async def main():
     ]
     
     # Use tqdm for progress tracking
-    for task in tqdm.as_completed(tasks, total=len(tasks), desc="Processing"):
-        await task
+    for coro in tqdm.as_completed(tasks, total=len(tasks), desc="Processing"):
+        await coro
     
     logger.info("Data fetch completed successfully!")
 
