@@ -52,24 +52,13 @@ The GUI ensures smooth usability while the backend performs efficient multi-task
 - **pandas / numpy** — data processing  
 - **python-dateutil / pytz / tqdm** — utilities  
 
-Dependencies come from `requirements.txt`:
-
-PyQt6>=6.5
-aiohttp>=3.9
-pandas>=2.0
-numpy>=1.23
-tqdm>=4.65
-python-dateutil
-pytz
-
-
 ---
 
 ## 🛠 Installation & Setup
 
 ### 1️⃣ Clone the repository
 ```bash
-git clone <repo-url>
+git clone [<repo-url>](https://github.com/Arppittjaiin/Crypto-data-using-binance.git)
 cd <project-folder>
 ```
 2️⃣ Install Python dependencies
