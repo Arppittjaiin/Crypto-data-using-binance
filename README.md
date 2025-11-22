@@ -71,7 +71,9 @@ pip install -r requirements.txt
 Modify symbols.txt to include one symbol per line:
 
 BTCUSDT
+
 ETHUSDT
+
 SOLUSDT
 ...
 
@@ -151,7 +153,7 @@ The app will automatically:
 
 Log the error
 
-Recreate CSV from fresh download
+Recreate CSV from fresh download.
 
 ❗ GUI freezing?
 
@@ -170,31 +172,16 @@ Arpit Jain (AJ)
 
 Licensed under the MIT License.
 
-Disclaimer
+Disclaimer:
 
 This tool is for educational and research purposes. Always verify the accuracy of data before using it for trading decisions. The authors are not responsible for any financial losses.
-
-
-Contributing
 
 Contributions are welcome! Feel free to:
 
 
-Report bugs
-
-Suggest features
-
-Submit pull requests
-
-Improve documentation
-
-Support
+Report bugs, suggest features, submit pull requests, improve documentation, and support
 
 
 For issues or questions:
 
-Check errors.log for detailed error messages
-
-Review this README's troubleshooting section
-
-Open an issue on the repository
+Check the errors.log for detailed error messages, review the troubleshooting section in this README, and open an issue in the repository.
