@@ -58,8 +58,9 @@ The GUI ensures smooth usability while the backend performs efficient multi-task
 
 ### 1️⃣ Clone the repository
 ```bash
-git clone [<repo-url>](https://github.com/Arppittjaiin/Crypto-data-using-binance.git)
-cd <project-folder>
+git clone https://github.com/Arppittjaiin/Crypto-data-using-binance.git
+cd Crypto-data-using-binance
+
 ```
 2️⃣ Install Python dependencies
 ```
@@ -91,9 +92,8 @@ Watch the progress bars + ETA update in real time
 CSV outputs appear in the data/ folder:
 
 data/BTCUSDT_1m.csv
-data/ETHUSDT_1h.csv
-...
 
+data/ETHUSDT_1h.csv
 
 If CSVs exist, the downloader continues from the last timestamp forward, ensuring efficient incremental updates.
 
@@ -120,14 +120,6 @@ GET https://api.binance.com/api/v3/klines
 ⏱ Timeframes (default)
 1m, 5m, 15m, 30m, 1h, 4h, 8h, 12h, 1d, 1w, 1M
 
-📁 Folder Structure
-.
-├── binance_fetcher.py      # Main GUI + downloader logic
-├── requirements.txt        # Python dependencies
-├── symbols.txt             # Initial symbol list
-├── data/                   # CSV output directory (auto-generated)
-└── errors.log              # Runtime error log (auto-generated)
-
 ⚙️ Configuration
 
 Tweak constants at the top of binance_fetcher.py:
@@ -150,6 +142,7 @@ BASE_URL – Binance endpoint
 Reduce:
 
 MAX_CONCURRENT_REQUESTS = 5
+
 REQUEST_DELAY = 0.10
 
 ❗ CSV errors?
@@ -175,4 +168,33 @@ Arpit Jain (AJ)
 
 🔒 License
 
-Licensed under the MIT License. See the LICENSE file for details.
+Licensed under the MIT License.
+
+Disclaimer
+
+This tool is for educational and research purposes. Always verify the accuracy of data before using it for trading decisions. The authors are not responsible for any financial losses.
+
+
+Contributing
+
+Contributions are welcome! Feel free to:
+
+
+Report bugs
+
+Suggest features
+
+Submit pull requests
+
+Improve documentation
+
+Support
+
+
+For issues or questions:
+
+Check errors.log for detailed error messages
+
+Review this README's troubleshooting section
+
+Open an issue on the repository
