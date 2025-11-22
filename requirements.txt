@@ -1,0 +1,7 @@
+PyQt6>=6.5
+aiohttp>=3.9
+pandas>=2.0
+numpy>=1.23
+tqdm>=4.65
+python-dateutil 
+pytz
