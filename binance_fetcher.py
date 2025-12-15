@@ -13,10 +13,6 @@ import math
 from typing import List, Tuple, Optional, Dict, Callable
 from dataclasses import dataclass, field
 
-# PyQt6
-from PyQt6 import QtWidgets, QtCore
-from PyQt6.QtCore import pyqtSignal, QThread, QSettings
-
 # ---------------- CONFIG ----------------
 SYMBOLS_FILE = "symbols.txt"
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "8h", "12h", "1d", "1w", "1M"]
@@ -30,6 +26,7 @@ DATA_DIR = "data"
 TCP_CONNECTOR_LIMIT = 100
 TCP_CONNECTOR_LIMIT_PER_HOST = 30
 
+# Setup logging to console and file
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -131,47 +128,6 @@ class ETAEstimator:
             return f"{m}m {s}s"
         return f"{s}s"
 
-# ---------------- SETTINGS MANAGER ----------------
-class SettingsManager:
-    def __init__(self, organization: str = "MyOrg", application: str = "BinanceDownloader"):
-        self.qsettings = QSettings(organization, application)
-
-    def save_symbols(self, symbols: List[str]) -> None:
-        self.qsettings.setValue("symbols", symbols)
-
-    def load_symbols(self) -> List[str]:
-        v = self.qsettings.value("symbols", [])
-        if isinstance(v, list):
-            return [str(x) for x in v]
-        if isinstance(v, str):
-            return [v]
-        return []
-
-    def save_timeframes(self, tfs: List[str]) -> None:
-        self.qsettings.setValue("timeframes", tfs)
-
-    def load_timeframes(self) -> List[str]:
-        v = self.qsettings.value("timeframes", [])
-        if isinstance(v, list):
-            return [str(x) for x in v]
-        if isinstance(v, str):
-            return [v]
-        return []
-
-    def save_geometry(self, geometry: bytes) -> None:
-        self.qsettings.setValue("geometry", geometry)
-
-    def load_geometry(self) -> Optional[bytes]:
-        v = self.qsettings.value("geometry", None)
-        return v if v is not None else None
-
-    def save_window_state(self, state: bytes) -> None:
-        self.qsettings.setValue("window_state", state)
-
-    def load_window_state(self) -> Optional[bytes]:
-        v = self.qsettings.value("window_state", None)
-        return v if v is not None else None
-
 # ---------------- PROGRESS MODEL ----------------
 @dataclass
 class TimeframeProgress:
@@ -252,18 +208,6 @@ class ProgressModel:
 
     def get_remaining(self) -> int:
         return max(0, self.total_tasks - self.completed_tasks)
-
-    def get_symbol_progress(self, symbol: str) -> Tuple[int, int]:
-        sp = self.symbols.get(symbol)
-        if not sp:
-            return 0, 0
-        return sp.completed_tasks, sp.total_tasks
-
-    def get_timeframe_progress(self, tf: str) -> Tuple[int, int]:
-        tfs = self.timeframe_summary.get(tf)
-        if not tfs:
-            return 0, 0
-        return tfs.completed_tasks, tfs.total_tasks
 
 # ---------------- HTTP FETCH ----------------
 class BinanceFetcher:
@@ -419,7 +363,7 @@ async def downloader_async_run(
     stop_event: Optional[asyncio.Event],
     progress_model: ProgressModel,
     eta: ETAEstimator,
-    on_tree_update: Optional[Callable[[str, str, str], None]] = None
+    on_update_callback: Optional[Callable[[str, str, str], None]] = None
 ) -> None:
     logger.info(f"Starting data fetch for {len(symbols)} symbols across {len(timeframes)} timeframes")
 
@@ -440,11 +384,8 @@ async def downloader_async_run(
                 progress_model.mark_done(symbol, tf, rows, reqs)
                 remaining = progress_model.get_remaining()
                 eta_str = eta.get_human_readable(remaining)
-                if on_tree_update:
-                    try:
-                        on_tree_update(symbol, tf, eta_str)
-                    except Exception:
-                        pass
+                if on_update_callback:
+                    on_update_callback(symbol, tf, eta_str)
 
         tasks = [asyncio.create_task(sem_task(sym, tf)) for sym in symbols for tf in timeframes]
         try:
@@ -466,300 +407,40 @@ async def downloader_async_run(
                 if not t.done():
                     t.cancel()
 
-    logger.info("Data fetch completed (async runner)")
+    logger.info("Data fetch completed")
 
-# ---------------- WORKER THREAD ----------------
-class DownloaderThread(QThread):
-    # log_signal: simple log text
-    log_signal = pyqtSignal(str)
-    # tree_update_signal: symbol, timeframe, eta_str
-    tree_update_signal = pyqtSignal(str, str, str)
-    # per-task progress: symbol, timeframe, new_rows, requests
-    single_progress_signal = pyqtSignal(str, str, int, int)
-    finished_signal = pyqtSignal()
+# ---------------- MAIN ----------------
+def main():
+    symbols = load_symbols()
+    if not symbols:
+        logger.error("No symbols found in symbols.txt! Exiting.")
+        return
+    
+    logger.info(f"Loaded symbols: {symbols}")
+    logger.info(f"Timeframes: {TIMEFRAMES}")
+    
+    stop_event = asyncio.Event()
 
-    def __init__(self, symbols: List[str], timeframes: List[str]):
-        super().__init__()
-        self.symbols = symbols
-        self.timeframes = timeframes
-        self._stop_flag = False
+    def on_update_callback(symbol: str, tf: str, eta_str: str):
+        pass
 
-    def run(self) -> None:
-        self.log_signal.emit("Downloader thread started")
+    progress_model = ProgressModel(symbols, TIMEFRAMES)
+    eta = ETAEstimator(alpha=0.18)
 
-        async def _runner():
-            stop_event = asyncio.Event()
-            progress_model = ProgressModel(self.symbols, self.timeframes, on_update=self._on_update)
-            eta = ETAEstimator(alpha=0.18)
-
-            def on_tree_update(symbol: str, tf: str, eta_str: str):
-                # emit signal for GUI update
-                self.tree_update_signal.emit(symbol, tf, eta_str)
-
-            task = asyncio.create_task(downloader_async_run(self.symbols, self.timeframes, stop_event, progress_model, eta, on_tree_update=on_tree_update))
-
-            while not task.done():
-                if self._stop_flag:
-                    self.log_signal.emit("Stop requested — signalling cancellation")
-                    stop_event.set()
-                await asyncio.sleep(0.2)
-
-            try:
-                await task
-            except Exception as e:
-                self.log_signal.emit(f"Downloader async runner error: {e}")
-
-        try:
-            asyncio.run(_runner())
-        except Exception as e:
-            self.log_signal.emit(f"Downloader thread error: {e}")
-        finally:
-            self.log_signal.emit("Downloader thread finished")
-            self.finished_signal.emit()
-
-    def _on_update(self, symbol: str, timeframe: str, rows: int, requests: int) -> None:
-        # forward progress to GUI
-        self.single_progress_signal.emit(symbol, timeframe, rows, requests)
-
-    def request_stop(self) -> None:
-        self._stop_flag = True
-
-# ---------------- GUI ----------------
-class ProgressItemWidget(QtWidgets.QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.layout = QtWidgets.QHBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.pb = QtWidgets.QProgressBar()
-        self.pb.setRange(0, 100)
-        self.label = QtWidgets.QLabel("")
-        self.layout.addWidget(self.pb, 1)
-        self.layout.addWidget(self.label, 0)
-
-    def set_busy(self):
-        self.pb.setRange(0, 0)
-        self.label.setText("working")
-
-    def set_done(self, rows: int):
-        self.pb.setRange(0, 1)
-        self.pb.setValue(1)
-        self.label.setText(f"done ({rows} rows)")
-
-    def set_percent(self, pct: int, txt: str = ''):
-        self.pb.setRange(0, 100)
-        self.pb.setValue(int(pct))
-        self.label.setText(txt)
-
-class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Binance Klines Downloader")
-        self.resize(1100, 700)
-        self.settings = SettingsManager()
-        self._build_ui()
-        self.worker: Optional[DownloaderThread] = None
-        self._load_settings()
-
-    def _build_ui(self):
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
-        main_layout = QtWidgets.QVBoxLayout(central)
-        top_layout = QtWidgets.QHBoxLayout()
-
-        # left: symbols and timeframes
-        left_v = QtWidgets.QVBoxLayout()
-        self.symbol_list = QtWidgets.QListWidget()
-        self.symbol_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.MultiSelection)
-        for s in load_symbols():
-            self.symbol_list.addItem(QtWidgets.QListWidgetItem(s))
-        left_v.addWidget(QtWidgets.QLabel("Symbols"))
-        left_v.addWidget(self.symbol_list)
-
-        self.tf_list = QtWidgets.QListWidget()
-        self.tf_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.MultiSelection)
-        for tf in TIMEFRAMES:
-            self.tf_list.addItem(QtWidgets.QListWidgetItem(tf))
-        left_v.addWidget(QtWidgets.QLabel("Timeframes"))
-        left_v.addWidget(self.tf_list)
-        top_layout.addLayout(left_v, 2)
-
-        # center: tree view
-        center_v = QtWidgets.QVBoxLayout()
-        self.tree = QtWidgets.QTreeWidget()
-        self.tree.setHeaderLabels(["Symbol / Timeframe", "Progress", "ETA"])
-        self.tree.setColumnWidth(0, 300)
-        center_v.addWidget(self.tree)
-        top_layout.addLayout(center_v, 5)
-
-        # right: controls and logs
-        right_v = QtWidgets.QVBoxLayout()
-        self.start_btn = QtWidgets.QPushButton("Start")
-        self.stop_btn = QtWidgets.QPushButton("Stop")
-        self.stop_btn.setEnabled(False)
-        self.download_all_btn = QtWidgets.QPushButton("Download All")
-        right_v.addWidget(self.start_btn)
-        right_v.addWidget(self.stop_btn)
-        right_v.addWidget(self.download_all_btn)
-
-        self.overall_pb = QtWidgets.QProgressBar()
-        right_v.addWidget(QtWidgets.QLabel("Overall Progress"))
-        right_v.addWidget(self.overall_pb)
-
-        self.log_view = QtWidgets.QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        right_v.addWidget(QtWidgets.QLabel("Logs"))
-        right_v.addWidget(self.log_view, 1)
-        top_layout.addLayout(right_v, 2)
-
-        main_layout.addLayout(top_layout)
-        self.status_label = QtWidgets.QLabel("Idle")
-        main_layout.addWidget(self.status_label)
-
-        # connections
-        self.start_btn.clicked.connect(self.start_download)
-        self.stop_btn.clicked.connect(self.stop_download)
-        self.download_all_btn.clicked.connect(self.download_all)
-
-    def _load_settings(self):
-        syms = self.settings.load_symbols()
-        tfs = self.settings.load_timeframes()
-
-        if syms:
-            for i in range(self.symbol_list.count()):
-                item = self.symbol_list.item(i)
-                item.setSelected(item.text() in syms)
-        else:
-            for i in range(self.symbol_list.count()):
-                self.symbol_list.item(i).setSelected(True)
-
-        if tfs:
-            for i in range(self.tf_list.count()):
-                item = self.tf_list.item(i)
-                item.setSelected(item.text() in tfs)
-        else:
-            for i in range(self.tf_list.count()):
-                self.tf_list.item(i).setSelected(True)
-
-        geom = self.settings.load_geometry()
-        if geom:
-            self.restoreGeometry(geom)
-
-        state = self.settings.load_window_state()
-        if state:
-            self.restoreState(state)
-
-    def _save_settings(self):
-        syms = [self.symbol_list.item(i).text() for i in range(self.symbol_list.count()) if self.symbol_list.item(i).isSelected()]
-        tfs = [self.tf_list.item(i).text() for i in range(self.tf_list.count()) if self.tf_list.item(i).isSelected()]
-        self.settings.save_symbols(syms)
-        self.settings.save_timeframes(tfs)
-        self.settings.save_geometry(self.saveGeometry())
-        self.settings.save_window_state(self.saveState())
-
-    def append_log(self, text: str) -> None:
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.log_view.appendPlainText(f"[{ts}] {text}")
-
-    def start_download(self):
-        symbols = [self.symbol_list.item(i).text() for i in range(self.symbol_list.count()) if self.symbol_list.item(i).isSelected()]
-        timeframes = [self.tf_list.item(i).text() for i in range(self.tf_list.count()) if self.tf_list.item(i).isSelected()]
-        if not symbols or not timeframes:
-            QtWidgets.QMessageBox.warning(self, "Selection Required", "Select at least one symbol and timeframe")
-            return
-
-        self._save_settings()
-
-        # prepare tree
-        self.tree.clear()
-        self._item_map: Dict[Tuple[str, Optional[str]], QtWidgets.QTreeWidgetItem] = {}
-        for s in symbols:
-            top = QtWidgets.QTreeWidgetItem([s, '', ''])
-            self.tree.addTopLevelItem(top)
-            self._item_map[(s, None)] = top
-            for tf in timeframes:
-                child = QtWidgets.QTreeWidgetItem([tf, '', ''])
-                top.addChild(child)
-                widget = ProgressItemWidget()
-                widget.set_busy()
-                self.tree.setItemWidget(child, 1, widget)
-                self._item_map[(s, tf)] = child
-
-        # reset overall pb
-        self.overall_total = len(symbols) * len(timeframes)
-        self.overall_completed = 0
-        self.overall_pb.setRange(0, self.overall_total)
-        self.overall_pb.setValue(0)
-
-        self.status_label.setText('Running')
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-
-        # start worker
-        self.worker = DownloaderThread(symbols, timeframes)
-        self.worker.log_signal.connect(self.append_log)
-        self.worker.single_progress_signal.connect(self.on_single_progress)
-        self.worker.tree_update_signal.connect(self.on_tree_update)
-        self.worker.finished_signal.connect(self.on_finished)
-        self.worker.start()
-
-    def download_all(self):
-        syms = load_symbols()
-        tfs = TIMEFRAMES
-        # ensure UI selection mirrors this
-        for i in range(self.symbol_list.count()):
-            item = self.symbol_list.item(i)
-            item.setSelected(item.text() in syms)
-        for i in range(self.tf_list.count()):
-            item = self.tf_list.item(i)
-            item.setSelected(item.text() in tfs)
-        self.append_log(f"Download All requested: {len(syms)} symbols x {len(tfs)} timeframes")
-        self.start_download()
-
-    def stop_download(self):
-        if self.worker:
-            self.append_log('Stop requested by user')
-            self.worker.request_stop()
-            self.stop_btn.setEnabled(False)
-
-    def on_single_progress(self, symbol: str, tf: str, new_rows: int, requests: int):
-        item = self._item_map.get((symbol, tf))
-        if item is not None:
-            widget: ProgressItemWidget = self.tree.itemWidget(item, 1)
-            if widget:
-                widget.set_done(new_rows)
-        # update overall
-        self.overall_completed += 1
-        self.overall_pb.setValue(self.overall_completed)
-        self.append_log(f"{symbol} {tf} -> rows={new_rows} requests={requests}")
-
-    def on_tree_update(self, symbol: str, tf: str, eta_str: str):
-        item = self._item_map.get((symbol, tf))
-        if item is not None:
-            item.setText(2, eta_str)
-        parent = self._item_map.get((symbol, None))
-        if parent is not None:
-            # keep parent's ETA as last child's ETA (simple approach)
-            parent.setText(2, eta_str if eta_str else '')
-
-    def on_finished(self):
-        self.append_log('Worker finished')
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.status_label.setText('Idle')
-
-    def closeEvent(self, event):
-        if self.worker and self.worker.isRunning():
-            self.worker.request_stop()
-            self.worker.wait(1000)
-        self._save_settings()
-        super().closeEvent(event)
-
-# ---------------- ENTRYPOINT ----------------
-def main_gui():
-    app = QtWidgets.QApplication([])
-    win = MainWindow()
-    win.show()
-    app.exec()
+    try:
+        asyncio.run(
+            downloader_async_run(
+                symbols,
+                TIMEFRAMES,
+                stop_event,
+                progress_model,
+                eta,
+                on_update_callback
+            )
+        )
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user. Stopping...")
+        stop_event.set()
 
 if __name__ == '__main__':
-    main_gui()
+    main()
